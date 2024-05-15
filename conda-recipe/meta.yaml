@@ -1,0 +1,20 @@
+package:
+  name: valpy
+  version: 0.1.0
+
+source:
+  git_url: https://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@github.gatech.edu/mpatel636/SSA_Validation.git
+  git_rev: main
+
+build:
+  script: {{ PYTHON }} -m pip install . -vv
+
+requirements:
+  build:
+    - pip
+    - setuptools
+    - python
+    - git
+  run:
+    - numpy
+    - malavp::rudolfpy
