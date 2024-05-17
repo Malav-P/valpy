@@ -2,8 +2,6 @@ import numpy as np
 from copy import deepcopy
 from typing import Optional, Tuple, List
 
-import sys
-sys.path.append("./python-filter")
 import rudolfpy as rd
 
 class ValidationModel:
