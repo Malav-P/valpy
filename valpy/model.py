@@ -20,8 +20,14 @@ class ValidationModel:
                  estimate_targets: np.ndarray[float],
                  P0_observers: np.ndarray[float],
                  P0_targets: np.ndarray[float],
-                 filter , #TODO  Base Filter type hint
+                 filter: rd.ExtendedKalmanFilter , #TODO  Base Filter type hint
                  timestep: float):
+        
+        if u.ndim != 3:
+            raise ValueError("Control tensor must have 3 dimensions, i for observer, j for target, and k for timestep")
+        
+        if type(filter) is not rd.ExtendedKalmanFilter:
+            raise TypeError("filter must be of type rd.ExtendedKalmanFilter")
 
         self.u = u
         self.groundtruth_observers = groundtruth_observers
@@ -59,21 +65,6 @@ class ValidationModel:
             observer_indices (np.ndarray[int]): a vector of observer indices at the relevant times for the target
         """
         u_j = self.u[:, target_idx, :]
-        # num_steps = u_j.shape[1]
-        # num_observers = u_j.shape[0]
-
-        # t_measurements = []
-        # observer_indices = []
-
-        # for k in range(num_steps):
-        #     t_meas = self.timestep * (k + 0.5)
-        #     for i in range(num_observers):
-        #         if u_j[i, k] == 1:
-        #             t_measurements.append(t_meas)
-        #             observer_indices.append(i)
-
-        # t_measurements = np.array(t_measurements, dtype=float)
-        # observer_indices = np.array(observer_indices, dtype=int)
 
         indices = np.where(u_j == 1)
 
@@ -147,19 +138,27 @@ class ValidationModel:
 
 
     
-    def _get_t_measurements_observer(self, observer_idx: int, num_measurements: int) -> np.ndarray[float]:
+    def _get_t_measurements_observer(self, observer_idx: int, num_measurements: Optional[int] = None) -> np.ndarray[float]:
         """
         Get a list of measurement times for the specified observer. Assume that the requested number of measurements is 
         equally distributed over the time span specified by the control.
 
         Args:
             observer_idx (int): index of the observers to get measurements for
+            num_measurements (int): number of measurements requested over simulation time. Must be > 0.
 
         Returns:
             t_measurements (np.ndarray[float64]): a vector of measurement times for the observer
         """
-
         num_steps = self.u.shape[2]
+
+        if num_measurements is None:
+            num_measurements = num_steps
+
+        elif num_measurements < 1:
+            raise ValueError("Argument `num_measurements` must be greater than 0.")
+        
+
         tspan = (0, self.timestep * num_steps)
 
         t_measurements = np.linspace(tspan[0], tspan[1], num_measurements)
@@ -215,6 +214,9 @@ class ValidationModel:
             num_steps = self.u.shape[2]
             t_eval = np.linspace(0, self.timestep * num_steps, 300)
 
+        if type(t_eval) is not np.ndarray:
+            raise TypeError("`t_eval` must be of type np.ndarray")
+
         x0 = self.groundtruth_observers[observer_idx]
 
         sol_true = self.filter.dynamics.solve([0.0, t_eval[-1]], x0, t_eval=t_eval)
@@ -239,6 +241,9 @@ class ValidationModel:
         if t_eval is None:
             num_steps = self.u.shape[2]
             t_eval = np.linspace(0, self.timestep * num_steps, 300)
+
+        if type(t_eval) is not np.ndarray:
+            raise TypeError("`t_eval` must be of type np.ndarray")
 
         x0 = self.groundtruth_targets[target_idx]
 
