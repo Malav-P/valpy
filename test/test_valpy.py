@@ -1,9 +1,11 @@
 import numpy as np
 import pytest
-from valpy.model import ValidationModel  # Replace 'your_module' with the actual module name
+from valpy.model import ValidationModel
 import rudolfpy as rd
 
-# This block sets up the measurement model, filter, and dynamics
+# to run these tests:
+# 1. make sure pytest (conda install pytest) is installed in your virtual environment.
+# 2. run `pytest test` from the root dir
 
 ## ground truth initial conditions for targets and observers
 groundtruth_targets = np.array([[

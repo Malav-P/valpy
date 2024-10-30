@@ -20,14 +20,14 @@ class ValidationModel:
                  estimate_targets: np.ndarray[float],
                  P0_observers: np.ndarray[float],
                  P0_targets: np.ndarray[float],
-                 filter: rd.ExtendedKalmanFilter , #TODO  Base Filter type hint
+                 filter: rd.BaseFilter , 
                  timestep: float):
         
         if u.ndim != 3:
             raise ValueError("Control tensor must have 3 dimensions, i for observer, j for target, and k for timestep")
         
-        if type(filter) is not rd.ExtendedKalmanFilter:
-            raise TypeError("filter must be of type rd.ExtendedKalmanFilter")
+        if not isinstance(filter, rd.BaseFilter):
+            raise TypeError("filter must be an instance rd.BaseFilter")
 
         self.u = u
         self.groundtruth_observers = groundtruth_observers
@@ -38,18 +38,6 @@ class ValidationModel:
         self.P0_targets = P0_targets
         self.filter = filter
         self.timestep = timestep
-
-        match self.filter.measurement_model.name:
-            case "Angle":
-                self.func_simulate_measurements = rd.func_simulate_measurement_angle
-            case "Angle_AngleRate":
-                self.func_simulate_measurements = rd.func_simulate_measurement_angle_anglerate
-            case "PositionVector":
-                self.func_simulate_measurements = rd.func_simulate_measurements
-            case "BaseMeasurement":
-                raise ValueError("Must use a derived class of BaseMeasurement")
-            case _:
-                raise NotImplementedError("This measurement model is not supported")
         
     
 
@@ -218,10 +206,11 @@ class ValidationModel:
             raise TypeError("`t_eval` must be of type np.ndarray")
 
         x0 = self.groundtruth_observers[observer_idx]
+        dim_x = x0.size
 
         sol_true = self.filter.dynamics.solve([0.0, t_eval[-1]], x0, t_eval=t_eval)
 
-        observer_history = [(sol_true.y[0:6, idx], None) for idx in range(t_eval.size)]
+        observer_history = [(sol_true.y[:dim_x, idx], None) for idx in range(t_eval.size)]
 
         return observer_history
 
@@ -246,10 +235,11 @@ class ValidationModel:
             raise TypeError("`t_eval` must be of type np.ndarray")
 
         x0 = self.groundtruth_targets[target_idx]
+        dim_x = x0.size
 
         sol_true = self.filter.dynamics.solve([0.0, t_eval[-1]], x0, t_eval=t_eval)
 
-        target_history = [(sol_true.y[0:6, idx], None) for idx in range(t_eval.size)]
+        target_history = [(sol_true.y[:dim_x, idx], None) for idx in range(t_eval.size)]
 
         return target_history
     
@@ -288,9 +278,7 @@ class ValidationModel:
         P0 = self.P0_observers[observer_idx]
 
         # initialize filter
-        self.filter.t = 0
-        self.filter.x = x0
-        self.filter.P = P0
+        self.filter.initialize(t = 0, x0 = x0, P0 = P0)
 
         # do estimation
         count_m = 0
@@ -311,13 +299,13 @@ class ValidationModel:
                     count_e += 1
                 case "measure":
                     x_true = observer_history_gt[count_m][0]
-                    y, R = self.func_simulate_measurements(self.filter.t, x_true , params_measurements[count_m])
-                    self.filter.update(y, R, params = params_measurements[count_m][0])
+                    y, R = self.filter.measurement_model.func_simulate_measurements(self.filter.t, x_true , params_measurements[count_m])
+                    self.filter.update(y, R, params = params_measurements[count_m])
                     count_m += 1
                 case "both":
                     x_true = observer_history_gt[count_m][0]
-                    y, R = self.func_simulate_measurements(self.filter.t, x_true , params_measurements[count_m])
-                    self.filter.update(y, R, params = params_measurements[count_m][0])
+                    y, R = self.filter.measurement_model.func_simulate_measurements(self.filter.t, x_true , params_measurements[count_m])
+                    self.filter.update(y, R, params = params_measurements[count_m])
                     x = self.filter.x
                     P = self.filter.P
                     observer_history.append((deepcopy(x), deepcopy(P)))
@@ -368,9 +356,7 @@ class ValidationModel:
         P0 = self.P0_targets[target_idx]
 
         # initialize filter
-        self.filter.t = 0
-        self.filter.x = x0
-        self.filter.P = P0
+        self.filter.initialize(t = 0, x0 = x0, P0 = P0)
 
         # do estimation
         count_m = 0
@@ -391,13 +377,13 @@ class ValidationModel:
                     count_e += 1
                 case "measure":
                     x_true = target_history_gt[count_m][0]
-                    y, R = self.func_simulate_measurements(self.filter.t, x_true , params_measurements[count_m])
-                    self.filter.update(y, R, params = params_measurements[count_m][0])
+                    y, R = self.filter.measurement_model.func_simulate_measurements(self.filter.t, x_true , params_measurements[count_m])
+                    self.filter.update(y, R, params = params_measurements[count_m])
                     count_m += 1
                 case "both":
                     x_true = target_history_gt[count_m][0]
-                    y, R = self.func_simulate_measurements(self.filter.t, x_true , params_measurements[count_m])
-                    self.filter.update(y, R, params = params_measurements[count_m][0])
+                    y, R = self.filter.measurement_model.func_simulate_measurements(self.filter.t, x_true , params_measurements[count_m])
+                    self.filter.update(y, R, params = params_measurements[count_m])
                     x = self.filter.x
                     P = self.filter.P
                     target_history.append((deepcopy(x), deepcopy(P)))
