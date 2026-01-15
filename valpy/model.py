@@ -13,7 +13,6 @@ class ValidationModel:
 
     """
     def __init__(self,
-                 u: np.ndarray[int],
                  groundtruth_observers: np.ndarray[float],
                  groundtruth_targets: np.ndarray[float],
                  estimate_observers: np.ndarray[float],
@@ -23,13 +22,12 @@ class ValidationModel:
                  filter: rd.BaseFilter , 
                  timestep: float):
         
-        if u.ndim != 3:
-            raise ValueError("Control tensor must have 3 dimensions, i for observer, j for target, and k for timestep")
+        # if u.ndim != 3:
+        #     raise ValueError("Control tensor must have 3 dimensions, i for observer, j for target, and k for timestep")
         
         if not isinstance(filter, rd.BaseFilter):
             raise TypeError("filter must be an instance rd.BaseFilter")
 
-        self.u = u
         self.groundtruth_observers = groundtruth_observers
         self.groundtruth_targets = groundtruth_targets
         self.estimate_observers = estimate_observers
@@ -41,81 +39,96 @@ class ValidationModel:
         
     
 
-    def _get_t_measurements_target(self, target_idx: int) -> tuple[np.ndarray[float], np.ndarray[int]]:
+    def _get_t_measurements_target(self, u: np.ndarray, target_idx: int) -> tuple[np.ndarray[float], np.ndarray[int]]:
         """
         Get a list of measurement times for the specified target, according to the control
 
         Args:
+            u (np.ndarray): 3d control array
             target_idx (int): index of the target to get measurements for
 
         Returns:
             t_measurements (np.ndarray[float]): a vector of measurement times for the target
             observer_indices (np.ndarray[int]): a vector of observer indices at the relevant times for the target
         """
-        u_j = self.u[:, target_idx, :]
+        u_j = u[:, target_idx, :]
 
         indices = np.where(u_j == 1)
 
-        t_measurements = self.timestep * (indices[1] + 0.5)
+
+        t_measurements = self.timestep * (np.sort(indices[1]) + 0.5)
         observer_indices = indices[0]
 
         return t_measurements, observer_indices
     
-    def _get_measurement_info_target(self, target_idx: int, filter_observers: Optional[bool] = False) -> tuple[np.ndarray, list]:
+    def _get_measurement_info_target(self,
+                                     u: np.ndarray,
+                                     target_idx: int,
+                                     filter_observers: Optional[bool] = False,
+                                     meas_model_sigma: Optional[float] = None,
+                                     dt_exposure: Optional[float] = None) -> tuple[np.ndarray, list]:
         """
         Get a measurement times and list of parameters for target measurement. Use default values.
 
         Args:
+            u (np.ndarray): 3d control tensor
             target_idx (int): index of chosen target        
+            filter_observers (bool): Whether to filter observers. Defaults to False.
+            meas_model_sigma (float): standard deviation of measurement model noise. If None, use default values.
+            dt_exposure (float): time of exposure for sensor measurement. If None, use default values.
         Returns:
             t_measurements (np.ndarray[float]): vector of measurement times
             params_measurements (list): list of measurement parameters for specified target
         """
 
+        t_measurements, observer_indices = self._get_t_measurements_target(u=u, target_idx=target_idx)
+
+        if filter_observers:
+            # TODO
+            raise NotImplementedError
+        
+        observer_histories = {}
+        for unique_observer_idx in np.unique(observer_indices):
+            observer_histories[unique_observer_idx] = self._get_observer_history_groundtruth(u=u, observer_idx=unique_observer_idx, t_eval=t_measurements)
+
+        x_observers = []
 
         match self.filter.measurement_model.name:
             case "Angle":
-                sigma_phi = np.deg2rad(0.5) # std of 0.5 degrees in angle measurement
-                t_measurements, observer_indices = self._get_t_measurements_target(target_idx=target_idx)
-                if filter_observers:
-                    # TODO 
-                    raise NotImplementedError
-                else:
-                    observer_histories = {}
-                    for unique_observer_idx in np.unique(observer_indices):
-                        observer_histories[unique_observer_idx] = self._get_observer_history_groundtruth(observer_idx=unique_observer_idx, t_eval=t_measurements)
-
-                r_observers = []
+                sigma = np.deg2rad(0.5) if meas_model_sigma is None else meas_model_sigma # std of 0.5 degrees in angle measurement
+                keep = 3
 
                 for i in range(len(t_measurements)):
                     observer_idx = observer_indices[i]
                     observer_state, _ = observer_histories[observer_idx][i]
-                    r_observers.append(observer_state[:3])
+                    x_observers.append(observer_state[:keep])
 
-                params_measurements = [[r_observer, sigma_phi] for r_observer in r_observers ]
+                params_measurements = [[x_observer, sigma] for x_observer in x_observers ]
                 
             case "Angle_AngleRate":
-                sigma_phi = np.deg2rad(0.5) # std of 0.5 degrees in angle measurement
-                dt = 3600 / self.filter.dynamics.TU # one hour exposure time for measurement
+                sigma = np.deg2rad(0.5) if meas_model_sigma is None else meas_model_sigma # std of 0.5 degrees in angle measurement
+                dt = 3600 / self.filter.dynamics.TU if dt_exposure is None else dt_exposure # one hour exposure time for measurement
+                keep = 6
 
-                t_measurements, observer_indices = self._get_t_measurements_target(target_idx=target_idx)
-                if filter_observers:
-                    # TODO 
-                    raise NotImplementedError
-                
-                else:
-                    observer_histories = {}
-                    for unique_observer_idx in np.unique(observer_indices):
-                        observer_histories[unique_observer_idx] = self._get_observer_history_groundtruth(observer_idx=unique_observer_idx, t_eval=t_measurements)
-
-                x_observers = []
 
                 for i in range(len(t_measurements)):
                     observer_idx = observer_indices[i]
                     observer_state, _ = observer_histories[observer_idx][i]
-                    x_observers.append(observer_state)
+                    x_observers.append(observer_state[:keep])
 
-                params_measurements = [[x_observer, sigma_phi, dt] for x_observer in x_observers ]
+                params_measurements = [[x_observer, sigma, dt] for x_observer in x_observers ]
+
+            case "Optical":
+                sigma = 1 if meas_model_sigma is None else meas_model_sigma # 1 pixel std dev in position measurement 
+                dt = 3600 / self.filter.dynamics.TU if dt_exposure is None else dt_exposure# one hour exposure time for measurement
+                keep = 6
+
+                for i in range(len(t_measurements)):
+                    observer_idx = observer_indices[i]
+                    observer_state, _ = observer_histories[observer_idx][i]
+                    x_observers.append(observer_state[:keep])
+                
+                params_measurements = [[x_observer, sigma, dt] for x_observer in x_observers ]
 
 
             case "PositionVector":
@@ -126,19 +139,23 @@ class ValidationModel:
 
 
     
-    def _get_t_measurements_observer(self, observer_idx: int, num_measurements: Optional[int] = None) -> np.ndarray[float]:
+    def _get_t_measurements_observer(self,
+                                     u: np.ndarray,
+                                     observer_idx: int,
+                                     num_measurements: Optional[int] = None) -> np.ndarray[float]:
         """
         Get a list of measurement times for the specified observer. Assume that the requested number of measurements is 
         equally distributed over the time span specified by the control.
 
         Args:
+            u (np.ndarray): 3d control array
             observer_idx (int): index of the observers to get measurements for
             num_measurements (int): number of measurements requested over simulation time. Must be > 0.
 
         Returns:
             t_measurements (np.ndarray[float64]): a vector of measurement times for the observer
         """
-        num_steps = self.u.shape[2]
+        num_steps = u.shape[2]
 
         if num_measurements is None:
             num_measurements = num_steps
@@ -186,12 +203,14 @@ class ValidationModel:
         return t_measurements, params_measurements
     
     def _get_observer_history_groundtruth(self,
+                                          u: np.ndarray,
                                           observer_idx:int,
                                           t_eval: Optional[np.ndarray] = None) -> list[tuple]:
         """
         Get observer state history, using the ground truth observer initial condition
 
         Args:
+            u (np.ndarray): control tensor 3d
             observer_idx (int): index of the observer to propagate
             t_eval (np.ndarray[float]): vector of times to evaluate solution at
 
@@ -199,7 +218,7 @@ class ValidationModel:
             observer_history (list[tuple]): observer history as a list of (x, P) tuples.
         """
         if t_eval is None:
-            num_steps = self.u.shape[2]
+            num_steps = u.shape[2]
             t_eval = np.linspace(0, self.timestep * num_steps, 300)
 
         if type(t_eval) is not np.ndarray:
@@ -208,6 +227,7 @@ class ValidationModel:
         x0 = self.groundtruth_observers[observer_idx]
         dim_x = x0.size
 
+
         sol_true = self.filter.dynamics.solve([0.0, t_eval[-1]], x0, t_eval=t_eval)
 
         observer_history = [(sol_true.y[:dim_x, idx], None) for idx in range(t_eval.size)]
@@ -215,12 +235,14 @@ class ValidationModel:
         return observer_history
 
     def _get_target_history_groundtruth(self,
+                                        u: np.ndarray,
                                         target_idx:int,
                                         t_eval: Optional[np.ndarray] = None) -> list[tuple]:
         """
         Get target state history, using the ground truth target initial condition
 
         Args:
+            u (np.ndarray): control tensor 3d
             target_idx (int): index of the target to propagate
             t_eval (np.ndarray[float]): vector of times to evaluate solution at
 
@@ -228,7 +250,7 @@ class ValidationModel:
             sol_true (OdeResult): returned object from `scipy.integrate.solve_ivp`
         """
         if t_eval is None:
-            num_steps = self.u.shape[2]
+            num_steps = u.shape[2]
             t_eval = np.linspace(0, self.timestep * num_steps, 300)
 
         if type(t_eval) is not np.ndarray:
@@ -244,6 +266,7 @@ class ValidationModel:
         return target_history
     
     def _get_observer_history_filter(self,
+                                     u: (np.ndarray),
                                      observer_idx: int,
                                      params_measurements: list,
                                      t_measurements: np.ndarray[float],
@@ -252,6 +275,7 @@ class ValidationModel:
         Get the observer state history, using a filter to estimate the observer position
 
         Args:
+            u (np.ndarray): 3d control tensor
             observer_idx (int): index of the observer to propagate
             params_measurements (list): list of measurement parameters to pass to `func_simulate_measurements` for each measurement taken.
             t_measurements (np.ndarray[float]): vector of times when measurements of observer state are taken
@@ -268,7 +292,7 @@ class ValidationModel:
             raise AssertionError(f"params_measurements (size: {len(params_measurements)}) must be of same size as t_measurements (size: f{t_measurements.size}).")
 
         if t_eval is None:
-            num_steps = self.u.shape[2]
+            num_steps = u.shape[2]
             t_eval = np.linspace(0, self.timestep * num_steps, 300)
 
         observer_history_gt = self._get_observer_history_groundtruth(observer_idx=observer_idx, t_eval=t_measurements)
@@ -315,20 +339,24 @@ class ValidationModel:
         return observer_history
     
     def _get_target_history_filter(self,
+                                   u: np.ndarray,
                                    target_idx: int,
                                    params_measurements: list,
                                    t_measurements: Optional[np.ndarray[float]] = None,
                                    t_eval: Optional[np.ndarray[float]] = None,
-                                   filter_observers: Optional[bool] = False) -> list[tuple]:
+                                   filter_observers: Optional[bool] = False,
+                                   **kwargs) -> list[tuple]:
         """
         Get the target state history at the requested times with the requested measurements
 
         Args:
+            u (np.ndarray): 3d control tensor
             target_idx (int): index of the target to propagate
             params_measurements (list): list of measurement parameters to pass to `func_simulate_measurements` for each measurement taken.
             t_measurements (np.ndarray[float]): vector of times when measurements of target state are taken. If None, defaults to times by control
             t_eval (np.ndarray[float]): vector of times to query the filtered state at. If None, equally distributed amongst time horizon specified in control
             filter_observers (bool): Whether to filter observers. Defaults to False.
+            **meas_model_kwargs: keyword arguments to pass to measurement model when getting measurement info for targets
 
         Returns:
             target_history (list[tuple[np.ndarray, np.ndarray]]): state history of target.
@@ -338,7 +366,7 @@ class ValidationModel:
         """
 
         if t_measurements is None:
-            t_measurements, params_measurements = self._get_measurement_info_target(target_idx=target_idx, filter_observers=filter_observers)
+            t_measurements, params_measurements = self._get_measurement_info_target(u=u,target_idx=target_idx, filter_observers=filter_observers, **kwargs)
 
 
         if len(params_measurements) != t_measurements.size:
@@ -346,10 +374,10 @@ class ValidationModel:
         
 
         if t_eval is None:
-            num_steps = self.u.shape[2]
+            num_steps = u.shape[2]
             t_eval = np.linspace(0, self.timestep * num_steps, 300)
 
-        target_history_gt = self._get_target_history_groundtruth(target_idx=target_idx, t_eval=t_measurements)
+        target_history_gt = self._get_target_history_groundtruth(u=u,target_idx=target_idx, t_eval=t_measurements)
         target_history = []
 
         x0 = self.estimate_targets[target_idx]
@@ -393,13 +421,18 @@ class ValidationModel:
 
         return target_history
     
-    def run(self, filter_observers: Optional[bool] = False) -> Tuple[List[Tuple[np.ndarray[float], np.ndarray[float]]],
-                                                                     List[Tuple[np.ndarray[float], np.ndarray[float]]]]: 
+    def run(self,
+            u: np.ndarray,
+            filter_observers: Optional[bool] = False,
+            **kwargs) -> Tuple[List[Tuple[np.ndarray[float], np.ndarray[float]]],
+                         List[Tuple[np.ndarray[float], np.ndarray[float]]]]: 
         """
         Run the validation model, filtering targets (and observers if necessary). Record history of target and observer states
 
         Args:
+            u (np.ndarray): 3d control tensor
             filter_observers (bool): whether or not to use filtering for observer states
+            **meas_model_kwargs: keyword arguments to pass to measurement model when getting measurement info for targets
 
         Returns:
             Tuple(List, List): Tuple containing two lists:
@@ -414,11 +447,13 @@ class ValidationModel:
         observer_histories = []
 
         for i in range(num_targets):
-            target_history = self._get_target_history_filter(target_idx=i, 
+            target_history = self._get_target_history_filter(u=u,
+                                                            target_idx=i, 
                                                             params_measurements=None, # will be ignored since t_measurements is None
                                                             t_measurements=None,  # default to measurements provided by control
                                                             t_eval=None, # default to 300 equally spaced points in the time horizon
-                                                            filter_observers=filter_observers)
+                                                            filter_observers=filter_observers,
+                                                            **kwargs)
             target_histories.append(target_history)
 
         if filter_observers:
@@ -433,14 +468,15 @@ class ValidationModel:
 
         else:
             for j in range(num_observers):
-                observer_history = self._get_observer_history_groundtruth(observer_idx=j,
+                observer_history = self._get_observer_history_groundtruth(u=u,
+                                                                          observer_idx=j,
                                                                           t_eval=None)
                 
                 observer_histories.append(observer_history)
                 
 
         
-        return target_history, observer_history
+        return target_histories, observer_histories
     
 
 def _get_history_filter_helper(t_measurements: np.ndarray[float],
