@@ -3,7 +3,7 @@ package:
   version: 0.1.2
 
 source:
-  git_url: https://github.gatech.edu/mpatel636/valpy.git
+  git_url: https://github.com/Malav-P/valpy.git
   git_rev: main
 
 build:
